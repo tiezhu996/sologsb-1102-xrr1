@@ -40,6 +40,16 @@ export function minutesToReadable(minutes: number): string {
   return m === 0 ? `${h} 小时` : `${h} 小时 ${m} 分钟`;
 }
 
+/** 分钟（时间轴相对开排零点的偏移）→ 「HH:MM」时刻，支持跨天（>24h 标 +d） */
+export function minutesToClock(minutes: number): string {
+  const safe = Math.max(0, Math.round(minutes));
+  const day = Math.floor(safe / 1440);
+  const h = Math.floor((safe % 1440) / 60);
+  const m = safe % 60;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${day > 0 ? `D+${day} ` : ''}${pad(h)}:${pad(m)}`;
+}
+
 /** 场次累计时长汇总（分钟 → 秒） */
 export function sumDurationSeconds(durations: ReadonlyArray<number>): number {
   return durations.reduce((acc, cur) => acc + (Number.isFinite(cur) ? Math.max(0, cur) : 0), 0) * 60;

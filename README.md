@@ -38,6 +38,7 @@ docker compose up -d --build
 | --- | --- |
 | 剧目库 | 新建剧目、按剧种（传统折子/新编）与状态（筹备中/排练中/可上演）筛选，环形指示展示平均排练成熟度 |
 | 场次拆分 | 场序表拖拽调序（自动重排并落库）、按场次勾选「本次排练覆盖范围」、左右相邻场次合计时长参考 |
+| 影窗周转 | 三台标准影窗占台排期账：双联影窗占两台，散场后留换景时间才放窗，容量不够排队顺延并写明被哪场占着；改时长/顺序/规格后未开排部分自动作废重算，写账失败可断点重试 |
 | 角色指派 | 登记全场影人角色（行当 / 需备影件 / 出场提示 / 唱白要点），为每个角色指派操耍人 |
 | 锣鼓点时间轴 | 按秒点插入急急风/四击头/水底鱼，选主奏乐器与领奏操耍人，刻度尺可点击定位、可试排播放 |
 | 操耍人档 | 维护技能标签（签子/连本/武打）与冲突时段，查看每人已派角色与累计排练时长，两两时段冲突对比 |
@@ -68,6 +69,7 @@ cd frontend
 npm install
 npm run dev      # http://localhost:21802
 npm run build    # tsc -b && vite build（类型检查 + 生产构建）
+npm test         # vitest run（影窗周转排期/落账等纯逻辑单测）
 npm run preview  # 本地预览构建产物
 ```
 
@@ -105,9 +107,19 @@ sologsb-1102/
 | --- | --- | --- |
 | `/plays` | 剧目库 | Play |
 | `/plays/:id/scenes` | 场次拆分与调序 | Scene、Play |
+| `/plays/:id/rotation` | 影窗周转账（占台排期） | Scene、ScreenRotation |
 | `/scenes/:id/roles` | 角色与操耍人指派 | ShadowRole、Operator |
 | `/scenes/:id/cues` | 锣鼓点时间轴 | PercussionCue、Scene |
 | `/operators` | 操耍人档与时段冲突 | Operator |
+
+### 影窗周转口径（`src/utils/screenRotation.ts` / `rotationLedger.ts`）
+
+- 后台固定 **3 台标准影窗**（编号 1-3）；每场按登记规格占台：**双联影窗占两台相邻窗位**，小/标准/大影窗各占一台；没登记规格的旧场次按一台标准影窗算。
+- 严格按**开排顺序（场序）**占台：前三台没撤，只要还有空窗位，下一场可同时上台。
+- 每场散场后保留**换景时间**（可在页面调整，默认 15 分钟），窗位到「换景完」时刻才释放。
+- 容量不够（双联凑不齐相邻两台也算）就**排队顺延**：开排不早于上一场，并在账上写明**被哪场占着**（`blockedBySceneIds`）与决定开排时刻的关键场（`waitingForSceneIds`）。
+- 场次**时长 / 顺序 / 规格**改动后，已开排账行锁定，**未开排的周转作废重算**（指纹：`seq|duration|spec|bays`）。
+- 写账（开排确认）按场序逐行落库；**失败可重试**，从最后确认的一场往下续，同一场不重复占台（存储层主键 `sceneId` 再兜一道）。
 
 ### 数据模型
 
@@ -123,7 +135,7 @@ sologsb-1102/
 
 ## 六、数据存储说明
 
-- **IndexedDB（Dexie）**：`src/utils/db.ts` 封装全部读写，数据库名 `gbshadowplay`，当前结构版本 **2**，并在 `version(2).upgrade()` 中提供升级迁移逻辑（补齐 `revision` 行修订号、兜底 `createdAt/updatedAt`）。
+- **IndexedDB（Dexie）**：`src/utils/db.ts` 封装全部读写，数据库名 `gbshadowplay`，当前结构版本 **3**（v3 新增 `screenRotations` 影窗周转账与 `rotationSettings` 周转设置两张表），并在 `version(3).upgrade()` 中提供升级迁移逻辑（补齐 `revision` 行修订号、兜底 `createdAt/updatedAt`）。
 - **localStorage**：`src/utils/localStore.ts` 统一封装界面偏好（最近打开的剧目、场次页「只看本次勾选」开关等）。
 - **首次打开**：数据库为空时自动灌入示例班社数据（3 出剧目 / 6 个场次 / 12 个影人角色 / 4 位操耍人 / 10 处锣鼓点），保证界面开箱即有内容可点。
 - **导入导出**：剧目库支持导出整库 JSON 存档、导入存档覆盖、以及重置为示例数据；操耍人档支持导出 CSV，剧目可导出排练通告 CSV。

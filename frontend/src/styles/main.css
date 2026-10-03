@@ -194,3 +194,12 @@ body::before {
     padding: 12px;
   }
 }
+
+/* 影窗周转账：已开排行底色 + 顺延行左侧提示 */
+.gb-row-confirmed > .ant-table-cell {
+  background-color: #f3f7ec !important;
+}
+
+.ant-table-row:hover .gb-row-confirmed > .ant-table-cell {
+  background-color: #edf5e3 !important;
+}

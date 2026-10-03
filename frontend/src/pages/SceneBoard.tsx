@@ -30,6 +30,7 @@ import {
   SaveOutlined,
   SoundOutlined,
   TeamOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { SceneCard } from '../components/common/SceneCard';
 import { EmptyState } from '../components/common/EmptyState';
@@ -202,6 +203,9 @@ export default function SceneBoard() {
               onClick={() => activeSceneId && navigate(ROUTES.cues(activeSceneId))}
             >
               锣鼓点
+            </Button>
+            <Button icon={<AppstoreOutlined />} onClick={() => navigate(ROUTES.rotation(playId))}>
+              影窗周转
             </Button>
           </Space>
         </div>

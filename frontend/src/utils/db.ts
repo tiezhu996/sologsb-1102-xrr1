@@ -10,11 +10,12 @@ import type { Scene } from '../types/scene';
 import type { ShadowRole } from '../types/role';
 import type { Operator } from '../types/operator';
 import type { PercussionCue } from '../types/cue';
+import type { LedgerEntry, RotationSettings } from './rotationLedger';
 import { nowIso } from './uuid';
 import { seedDatabase } from './seed';
 
 /** 当前数据结构版本号（每次调整字段结构必须 +1 并补迁移） */
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 /** 数据库名 */
 export const DB_NAME = 'gbshadowplay';
@@ -30,8 +31,19 @@ export type SceneRow = Scene & Revisioned;
 export type RoleRow = ShadowRole & Revisioned;
 export type OperatorRow = Operator & Revisioned;
 export type CueRow = PercussionCue & Revisioned;
+/** 影窗周转账行（一场一行，写账即锁定占台） */
+export type ScreenRotationRow = LedgerEntry;
+/** 每个剧目一条的周转设置（开排时刻 / 换景时间） */
+export interface RotationSettingsRow extends Revisioned {
+  /** 主键：剧目 id */
+  playId: string;
+  settings: RotationSettings;
+  /** 上次计算未开排周转时的场次指纹 */
+  pendingFingerprint: string | null;
+  updatedAt: string;
+}
 
-export const ROW_REVISION = 2;
+export const ROW_REVISION = 3;
 
 class ShadowPlayDatabase extends Dexie {
   plays!: Table<PlayRow, string>;
@@ -39,6 +51,8 @@ class ShadowPlayDatabase extends Dexie {
   roles!: Table<RoleRow, string>;
   operators!: Table<OperatorRow, string>;
   cues!: Table<CueRow, string>;
+  screenRotations!: Table<ScreenRotationRow, string>;
+  rotationSettings!: Table<RotationSettingsRow, string>;
 
   constructor() {
     super(DB_NAME);
@@ -53,6 +67,15 @@ class ShadowPlayDatabase extends Dexie {
     });
 
     // v2：新增 revision 行修订号；场次补充索引，锣鼓点补充 playId 冗余便于按剧目统计
+    this.version(2).stores({
+      plays: 'id, title, genre, status, createdAt, updatedAt',
+      scenes: 'id, playId, seq, progress, needsShadowScreen',
+      roles: 'id, sceneId, operatorId, roleType, name',
+      operators: 'id, name, rehearsalHours',
+      cues: 'id, sceneId, atSecond, instrument, beatName',
+    });
+
+    // v3：新增影窗周转账（按剧目 + 场次落账）与每剧目周转设置
     this.version(DB_SCHEMA_VERSION)
       .stores({
         plays: 'id, title, genre, status, createdAt, updatedAt',
@@ -60,9 +83,11 @@ class ShadowPlayDatabase extends Dexie {
         roles: 'id, sceneId, operatorId, roleType, name',
         operators: 'id, name, rehearsalHours',
         cues: 'id, sceneId, atSecond, instrument, beatName',
+        screenRotations: 'sceneId, playId, seq',
+        rotationSettings: 'playId',
       })
       .upgrade(async (tx) => {
-        // 迁移：补齐 revision，并兜底历史数据里缺失的字段
+        // v1→v2→v3：老库升级时补齐历史表的 revision 与时间戳
         const tables: Array<Table<Record<string, unknown>, string>> = [
           tx.table('plays'),
           tx.table('scenes'),
@@ -107,14 +132,19 @@ export async function putPlay(row: PlayRow): Promise<void> {
 }
 
 export async function removePlay(id: string): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.cues, async () => {
+  await db.transaction(
+    'rw',
+    [db.plays, db.scenes, db.roles, db.cues, db.screenRotations, db.rotationSettings],
+    async () => {
     const scenes = await db.scenes.where('playId').equals(id).toArray();
     const sceneIds = scenes.map((scene) => scene.id);
     if (sceneIds.length > 0) {
       await db.roles.where('sceneId').anyOf(sceneIds).delete();
       await db.cues.where('sceneId').anyOf(sceneIds).delete();
+      await db.screenRotations.where('playId').equals(id).delete();
     }
     await db.scenes.where('playId').equals(id).delete();
+    await db.rotationSettings.delete(id);
     await db.plays.delete(id);
   });
 }
@@ -139,9 +169,11 @@ export async function putScenes(rows: SceneRow[]): Promise<void> {
 }
 
 export async function removeScene(id: string): Promise<void> {
-  await db.transaction('rw', db.scenes, db.roles, db.cues, async () => {
+  await db.transaction('rw', db.scenes, db.roles, db.cues, db.screenRotations, async () => {
     await db.roles.where('sceneId').equals(id).delete();
     await db.cues.where('sceneId').equals(id).delete();
+    // 删场次即清掉其周转账行（已开排行同样随场次删除）
+    await db.screenRotations.delete(id);
     await db.scenes.delete(id);
   });
 }
@@ -214,6 +246,26 @@ export async function removeCue(id: string): Promise<void> {
   await db.cues.delete(id);
 }
 
+/* --------------------------- 影窗周转账 --------------------------- */
+
+export async function listRotationEntriesByPlay(playId: string): Promise<ScreenRotationRow[]> {
+  const rows = await db.screenRotations.where('playId').equals(playId).toArray();
+  return rows.sort((a, b) => a.seq - b.seq);
+}
+
+export async function putRotationEntry(row: ScreenRotationRow): Promise<void> {
+  await db.screenRotations.put(row);
+}
+
+/** 某剧目的周转设置（开排时刻 / 换景时间 / 未开排指纹），无则返回 null */
+export async function getRotationSettings(playId: string): Promise<RotationSettingsRow | undefined> {
+  return db.rotationSettings.get(playId);
+}
+
+export async function putRotationSettings(row: RotationSettingsRow): Promise<void> {
+  await db.rotationSettings.put(row);
+}
+
 /* --------------------------- 整库导入导出 --------------------------- */
 
 export interface DatabaseSnapshot {
@@ -226,16 +278,21 @@ export interface DatabaseSnapshot {
   roles: ShadowRole[];
   operators: Operator[];
   cues: PercussionCue[];
+  /** v3 新增：影窗周转账与周转设置；旧存档没有这两个字段，按空处理 */
+  screenRotations?: LedgerEntry[];
+  rotationSettings?: Array<Omit<RotationSettingsRow, 'revision'>>;
 }
 
 /** 导出整库快照（去掉内部 revision 字段） */
 export async function exportSnapshot(): Promise<DatabaseSnapshot> {
-  const [plays, scenes, roles, operators, cues] = await Promise.all([
+  const [plays, scenes, roles, operators, cues, screenRotations, rotationSettings] = await Promise.all([
     db.plays.toArray(),
     db.scenes.toArray(),
     db.roles.toArray(),
     db.operators.toArray(),
     db.cues.toArray(),
+    db.screenRotations.toArray(),
+    db.rotationSettings.toArray(),
   ]);
   const strip = <T extends Revisioned>(row: T): Omit<T, 'revision'> => {
     const { revision: _revision, ...rest } = row;
@@ -250,50 +307,68 @@ export async function exportSnapshot(): Promise<DatabaseSnapshot> {
     roles: roles.map(strip),
     operators: operators.map(strip),
     cues: cues.map(strip),
+    screenRotations,
+    rotationSettings: rotationSettings.map(strip),
   };
 }
 
 /** 用快照覆盖整库（导入存档） */
 export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.operators, db.cues, async () => {
-    await Promise.all([
-      db.plays.clear(),
-      db.scenes.clear(),
-      db.roles.clear(),
-      db.operators.clear(),
-      db.cues.clear(),
-    ]);
-    const rev = <T>(row: T): T & Revisioned => ({ ...row, revision: ROW_REVISION });
-    await db.plays.bulkPut(snapshot.plays.map(rev));
-    await db.scenes.bulkPut(snapshot.scenes.map(rev));
-    await db.roles.bulkPut(snapshot.roles.map(rev));
-    await db.operators.bulkPut(snapshot.operators.map(rev));
-    await db.cues.bulkPut(snapshot.cues.map(rev));
-  });
+  await db.transaction(
+    'rw',
+    [db.plays, db.scenes, db.roles, db.operators, db.cues, db.screenRotations, db.rotationSettings],
+    async () => {
+      await Promise.all([
+        db.plays.clear(),
+        db.scenes.clear(),
+        db.roles.clear(),
+        db.operators.clear(),
+        db.cues.clear(),
+        db.screenRotations.clear(),
+        db.rotationSettings.clear(),
+      ]);
+      const rev = <T>(row: T): T & Revisioned => ({ ...row, revision: ROW_REVISION });
+      await db.plays.bulkPut(snapshot.plays.map(rev));
+      await db.scenes.bulkPut(snapshot.scenes.map(rev));
+      await db.roles.bulkPut(snapshot.roles.map(rev));
+      await db.operators.bulkPut(snapshot.operators.map(rev));
+      await db.cues.bulkPut(snapshot.cues.map(rev));
+      // 周转账行本身不带 revision；设置行带
+      if (snapshot.screenRotations) await db.screenRotations.bulkPut(snapshot.screenRotations);
+      if (snapshot.rotationSettings) await db.rotationSettings.bulkPut(snapshot.rotationSettings.map(rev));
+    },
+  );
 }
 
 /** 清空全部数据并重新灌入示例数据 */
 export async function resetDatabase(): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.operators, db.cues, async () => {
-    await Promise.all([
-      db.plays.clear(),
-      db.scenes.clear(),
-      db.roles.clear(),
-      db.operators.clear(),
-      db.cues.clear(),
-    ]);
-  });
+  await db.transaction(
+    'rw',
+    [db.plays, db.scenes, db.roles, db.operators, db.cues, db.screenRotations, db.rotationSettings],
+    async () => {
+      await Promise.all([
+        db.plays.clear(),
+        db.scenes.clear(),
+        db.roles.clear(),
+        db.operators.clear(),
+        db.cues.clear(),
+        db.screenRotations.clear(),
+        db.rotationSettings.clear(),
+      ]);
+    },
+  );
   await seedDatabase();
 }
 
 /** 粗略统计各表行数，用于页脚与概览展示 */
 export async function countAll(): Promise<Record<string, number>> {
-  const [plays, scenes, roles, operators, cues] = await Promise.all([
+  const [plays, scenes, roles, operators, cues, screenRotations] = await Promise.all([
     db.plays.count(),
     db.scenes.count(),
     db.roles.count(),
     db.operators.count(),
     db.cues.count(),
+    db.screenRotations.count(),
   ]);
-  return { plays, scenes, roles, operators, cues };
+  return { plays, scenes, roles, operators, cues, screenRotations };
 }

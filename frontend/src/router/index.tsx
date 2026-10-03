@@ -1,5 +1,6 @@
 /**
- * 路由表：/plays、/plays/:id/scenes、/scenes/:id/roles、/scenes/:id/cues、/operators
+ * 路由表：/plays、/plays/:id/scenes、/plays/:id/rotation、
+ * /scenes/:id/roles、/scenes/:id/cues、/operators
  * 页面按路由懒加载，构建时自动分包。
  */
 import { Suspense, lazy, type ReactNode } from 'react';
@@ -9,6 +10,7 @@ import App from '../App';
 
 const PlayList = lazy(() => import('../pages/PlayList'));
 const SceneBoard = lazy(() => import('../pages/SceneBoard'));
+const ScreenRotation = lazy(() => import('../pages/ScreenRotation'));
 const RoleAssign = lazy(() => import('../pages/RoleAssign'));
 const CueTimeline = lazy(() => import('../pages/CueTimeline'));
 const OperatorList = lazy(() => import('../pages/OperatorList'));
@@ -26,6 +28,7 @@ function withSuspense(node: ReactNode): ReactNode {
 export const ROUTES = {
   plays: '/plays',
   scenes: (playId: string): string => `/plays/${playId}/scenes`,
+  rotation: (playId: string): string => `/plays/${playId}/rotation`,
   roles: (sceneId: string): string => `/scenes/${sceneId}/roles`,
   cues: (sceneId: string): string => `/scenes/${sceneId}/cues`,
   operators: '/operators',
@@ -39,6 +42,7 @@ export const appRoutes: RouteObject[] = [
       { index: true, element: <Navigate to={ROUTES.plays} replace /> },
       { path: 'plays', element: withSuspense(<PlayList />) },
       { path: 'plays/:id/scenes', element: withSuspense(<SceneBoard />) },
+      { path: 'plays/:id/rotation', element: withSuspense(<ScreenRotation />) },
       { path: 'scenes/:id/roles', element: withSuspense(<RoleAssign />) },
       { path: 'scenes/:id/cues', element: withSuspense(<CueTimeline />) },
       { path: 'operators', element: withSuspense(<OperatorList />) },
