@@ -41,6 +41,7 @@ docker compose up -d --build
 | 角色指派 | 登记全场影人角色（行当 / 需备影件 / 出场提示 / 唱白要点），为每个角色指派操耍人 |
 | 锣鼓点时间轴 | 按秒点插入急急风/四击头/水底鱼，选主奏乐器与领奏操耍人，刻度尺可点击定位、可试排播放 |
 | 操耍人档 | 维护技能标签（签子/连本/武打）与冲突时段，查看每人已派角色与累计排练时长，两两时段冲突对比 |
+| 影窗周转账 | 后台三台标准影窗按开排顺序逐场占台写账；双联影窗算两台，散场后留换景时间再放台，容量不够排队顺延并登记占台场次；已开排锁定，改动后未开排排期自动作废重算，写账失败可重试 |
 
 **冲突拦截**：指派操耍人时，会依据该人已排时段与同场其他影人操耍人的时段做重叠判定，冲突的候选人在下拉中直接禁用并给出拦截原因；操耍人自身时段互相重叠也会高亮预警。
 
@@ -87,14 +88,15 @@ sologsb-1102/
     ├── nginx.conf              # SPA fallback（try_files）+ gzip
     ├── index.html / vite.config.ts / tsconfig.json / package.json
     └── src/
-        ├── types/              # play.ts scene.ts role.ts operator.ts cue.ts
-        ├── stores/             # playStore.ts sceneStore.ts operatorStore.ts（Zustand）
+        ├── types/              # play.ts scene.ts role.ts operator.ts cue.ts turnover.ts
+        ├── stores/             # playStore.ts sceneStore.ts operatorStore.ts turnoverStore.ts（Zustand）
         ├── components/common/  # SceneCard.tsx AssigneePicker.tsx ProgressRing.tsx EmptyState.tsx
         ├── hooks/              # useSceneOrder.ts useOperatorConflict.ts
-        ├── pages/              # PlayList.tsx SceneBoard.tsx RoleAssign.tsx CueTimeline.tsx OperatorList.tsx
+        ├── pages/              # PlayList.tsx SceneBoard.tsx TurnoverBoard.tsx RoleAssign.tsx CueTimeline.tsx OperatorList.tsx
         ├── router/             # index.tsx（路由表 + 懒加载分包）
-        ├── utils/              # timecode.ts db.ts export.ts（另有 localStore/seed/uuid 辅助）
-        ├── styles/main.css     # 皮影暖纸底主题样式
+        ├── utils/              # timecode.ts db.ts export.ts turnoverScheduler.ts（另有 localStore/seed/uuid 辅助）
+        ├── scripts/            # 排程算法自测（esbuild 打包后由 node 运行）
+        ├── styles/main.css     # 皮影暖纸底主题样式（含台口甘特图）
         ├── App.tsx             # 布局与外层导航
         └── main.tsx            # 入口：ConfigProvider(zh_CN) + RouterProvider
 ```
@@ -105,6 +107,7 @@ sologsb-1102/
 | --- | --- | --- |
 | `/plays` | 剧目库 | Play |
 | `/plays/:id/scenes` | 场次拆分与调序 | Scene、Play |
+| `/plays/:id/turnover` | 影窗周转账（占台/换景/排队顺延） | ScreenLedger、Scene |
 | `/scenes/:id/roles` | 角色与操耍人指派 | ShadowRole、Operator |
 | `/scenes/:id/cues` | 锣鼓点时间轴 | PercussionCue、Scene |
 | `/operators` | 操耍人档与时段冲突 | Operator |
@@ -118,12 +121,13 @@ sologsb-1102/
 | ShadowRole 影人角色 | `src/types/role.ts` | id、sceneId、name、roleType、propParts、entranceCue、lineNote、operatorId |
 | Operator 操耍人 | `src/types/operator.ts` | id、name、skillTags、busySlots、assignedRoleIds、rehearsalHours |
 | PercussionCue 锣鼓点 | `src/types/cue.ts` | id、sceneId、beatName、instrument、atSecond、leadOperator、note |
+| ScreenLedger 影窗周转账 | `src/types/turnover.ts` | id、playId、sceneId（唯一）、screenSpec、slots、durationMin、changeoverMin、startMin/endMin/setMin、delayMin、blockedBySceneIds、confirmedAt |
 
 ---
 
 ## 六、数据存储说明
 
-- **IndexedDB（Dexie）**：`src/utils/db.ts` 封装全部读写，数据库名 `gbshadowplay`，当前结构版本 **2**，并在 `version(2).upgrade()` 中提供升级迁移逻辑（补齐 `revision` 行修订号、兜底 `createdAt/updatedAt`）。
+- **IndexedDB（Dexie）**：`src/utils/db.ts` 封装全部读写，数据库名 `gbshadowplay`，当前结构版本 **3**；v2 补齐 `revision` 行修订号与 `createdAt/updatedAt` 兜底，v3 新增影窗周转账 `screenLedgers` 表（`sceneId` 唯一索引保证同场不重复占台）。
 - **localStorage**：`src/utils/localStore.ts` 统一封装界面偏好（最近打开的剧目、场次页「只看本次勾选」开关等）。
 - **首次打开**：数据库为空时自动灌入示例班社数据（3 出剧目 / 6 个场次 / 12 个影人角色 / 4 位操耍人 / 10 处锣鼓点），保证界面开箱即有内容可点。
 - **导入导出**：剧目库支持导出整库 JSON 存档、导入存档覆盖、以及重置为示例数据；操耍人档支持导出 CSV，剧目可导出排练通告 CSV。

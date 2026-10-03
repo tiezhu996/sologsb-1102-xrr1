@@ -30,6 +30,7 @@ import {
   SaveOutlined,
   SoundOutlined,
   TeamOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import { SceneCard } from '../components/common/SceneCard';
 import { EmptyState } from '../components/common/EmptyState';
@@ -202,6 +203,9 @@ export default function SceneBoard() {
               onClick={() => activeSceneId && navigate(ROUTES.cues(activeSceneId))}
             >
               锣鼓点
+            </Button>
+            <Button icon={<UnorderedListOutlined />} onClick={() => navigate(ROUTES.turnover(playId))}>
+              影窗周转账
             </Button>
           </Space>
         </div>

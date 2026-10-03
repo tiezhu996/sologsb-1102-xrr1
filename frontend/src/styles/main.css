@@ -189,6 +189,127 @@ body::before {
   padding: 8px 8px !important;
 }
 
+/* 影窗周转账 · 台口甘特图 */
+.gb-gantt {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--gb-line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fffdf8, #f5ebd8);
+  overflow: hidden;
+}
+
+.gb-gantt-scale {
+  position: relative;
+  border-bottom: 1px dashed rgba(43, 26, 18, 0.2);
+}
+
+.gb-gantt-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(43, 26, 18, 0.12);
+}
+
+.gb-gantt-tick span {
+  position: absolute;
+  top: 5px;
+  left: 3px;
+  font-size: 11px;
+  color: rgba(43, 26, 18, 0.6);
+  white-space: nowrap;
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+
+.gb-gantt-lanes {
+  position: absolute;
+  inset: 26px 0 0 0;
+}
+
+.gb-gantt-lane {
+  position: relative;
+  margin-inline: 8px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(122, 31, 31, 0.05) 0 24px,
+    rgba(122, 31, 31, 0.02) 24px 48px
+  );
+  border: 1px solid rgba(43, 26, 18, 0.12);
+}
+
+.gb-gantt-lane-label {
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: rgba(43, 26, 18, 0.45);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.gb-gantt-bar {
+  position: absolute;
+  display: flex;
+  border-radius: 5px;
+  overflow: hidden;
+  cursor: default;
+  box-shadow: 0 1px 3px rgba(43, 26, 18, 0.28);
+  min-width: 3px;
+}
+
+.gb-gantt-bar-main {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #fffdf8;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.gb-gantt-bar-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gb-gantt-bar-co {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(201, 150, 60, 0.55) 0 5px,
+    rgba(255, 253, 248, 0.55) 5px 10px
+  );
+  border-left: 1px dashed rgba(43, 26, 18, 0.35);
+}
+
+.gb-gantt-bar.is-confirmed .gb-gantt-bar-main {
+  background: var(--gb-green);
+}
+
+.gb-gantt-bar.is-pending .gb-gantt-bar-main {
+  background: #4a6b8a;
+}
+
+.gb-gantt-bar.is-twin {
+  outline: 2px solid rgba(111, 66, 138, 0.75);
+  outline-offset: -1px;
+}
+
+.gb-gantt-bar.is-twin .gb-gantt-bar-main {
+  background: #6f428a;
+}
+
+.gb-ledger-confirmed > td {
+  background: rgba(47, 111, 79, 0.05) !important;
+}
+
+.gb-ledger-pending > td {
+  background: rgba(74, 107, 138, 0.04) !important;
+}
+
 @media (max-width: 900px) {
   .gb-panel {
     padding: 12px;

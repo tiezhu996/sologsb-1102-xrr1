@@ -10,11 +10,12 @@ import type { Scene } from '../types/scene';
 import type { ShadowRole } from '../types/role';
 import type { Operator } from '../types/operator';
 import type { PercussionCue } from '../types/cue';
+import type { ScreenLedgerEntry } from '../types/turnover';
 import { nowIso } from './uuid';
 import { seedDatabase } from './seed';
 
 /** 当前数据结构版本号（每次调整字段结构必须 +1 并补迁移） */
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 /** 数据库名 */
 export const DB_NAME = 'gbshadowplay';
@@ -30,6 +31,8 @@ export type SceneRow = Scene & Revisioned;
 export type RoleRow = ShadowRole & Revisioned;
 export type OperatorRow = Operator & Revisioned;
 export type CueRow = PercussionCue & Revisioned;
+/** 影窗周转账本身即内部表，直接挂 revision 行修订号 */
+export type ScreenLedgerRow = ScreenLedgerEntry & Revisioned;
 
 export const ROW_REVISION = 2;
 
@@ -39,6 +42,7 @@ class ShadowPlayDatabase extends Dexie {
   roles!: Table<RoleRow, string>;
   operators!: Table<OperatorRow, string>;
   cues!: Table<CueRow, string>;
+  screenLedgers!: Table<ScreenLedgerRow, string>;
 
   constructor() {
     super(DB_NAME);
@@ -53,7 +57,7 @@ class ShadowPlayDatabase extends Dexie {
     });
 
     // v2：新增 revision 行修订号；场次补充索引，锣鼓点补充 playId 冗余便于按剧目统计
-    this.version(DB_SCHEMA_VERSION)
+    this.version(2)
       .stores({
         plays: 'id, title, genre, status, createdAt, updatedAt',
         scenes: 'id, playId, seq, progress, needsShadowScreen',
@@ -78,6 +82,16 @@ class ShadowPlayDatabase extends Dexie {
           });
         }
       });
+
+    // v3：新增影窗周转账表（sceneId 唯一索引保证同场不重复占台）
+    this.version(DB_SCHEMA_VERSION).stores({
+      plays: 'id, title, genre, status, createdAt, updatedAt',
+      scenes: 'id, playId, seq, progress, needsShadowScreen',
+      roles: 'id, sceneId, operatorId, roleType, name',
+      operators: 'id, name, rehearsalHours',
+      cues: 'id, sceneId, atSecond, instrument, beatName',
+      screenLedgers: 'id, playId, sceneId, orderIndex, confirmedAt',
+    });
   }
 }
 
@@ -107,14 +121,16 @@ export async function putPlay(row: PlayRow): Promise<void> {
 }
 
 export async function removePlay(id: string): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.cues, async () => {
+  await db.transaction('rw', db.plays, db.scenes, db.roles, db.cues, db.screenLedgers, async () => {
     const scenes = await db.scenes.where('playId').equals(id).toArray();
     const sceneIds = scenes.map((scene) => scene.id);
     if (sceneIds.length > 0) {
       await db.roles.where('sceneId').anyOf(sceneIds).delete();
       await db.cues.where('sceneId').anyOf(sceneIds).delete();
+      await db.screenLedgers.where('sceneId').anyOf(sceneIds).delete();
     }
     await db.scenes.where('playId').equals(id).delete();
+    await db.screenLedgers.where('playId').equals(id).delete();
     await db.plays.delete(id);
   });
 }
@@ -139,9 +155,10 @@ export async function putScenes(rows: SceneRow[]): Promise<void> {
 }
 
 export async function removeScene(id: string): Promise<void> {
-  await db.transaction('rw', db.scenes, db.roles, db.cues, async () => {
+  await db.transaction('rw', db.scenes, db.roles, db.cues, db.screenLedgers, async () => {
     await db.roles.where('sceneId').equals(id).delete();
     await db.cues.where('sceneId').equals(id).delete();
+    await db.screenLedgers.where('sceneId').equals(id).delete();
     await db.scenes.delete(id);
   });
 }
@@ -214,6 +231,49 @@ export async function removeCue(id: string): Promise<void> {
   await db.cues.delete(id);
 }
 
+/* ---------------------------- 影窗周转账 ---------------------------- */
+
+/** 取某剧目的全部已开排账本条（按确认先后排列） */
+export async function listLedgersByPlay(playId: string): Promise<ScreenLedgerRow[]> {
+  const rows = await db.screenLedgers.where('playId').equals(playId).toArray();
+  return rows.sort((a, b) => a.confirmedAt.localeCompare(b.confirmedAt));
+}
+
+/** 按场次 id 取账本条（写账前查重，保证同场不重复占台） */
+export async function getLedgerByScene(sceneId: string): Promise<ScreenLedgerRow | undefined> {
+  return db.screenLedgers.where('sceneId').equals(sceneId).first();
+}
+
+/** 落一条开排账（按 sceneId 幂等：已存在则整体覆盖，绝不新增第二条） */
+export async function putLedger(row: ScreenLedgerRow): Promise<void> {
+  await db.transaction('rw', db.screenLedgers, async () => {
+    const existing = await db.screenLedgers.where('sceneId').equals(row.sceneId).first();
+    if (existing) {
+      await db.screenLedgers.put({ ...row, id: existing.id });
+    } else {
+      await db.screenLedgers.put(row);
+    }
+  });
+}
+
+/** 删除最后确认的一场账（回退用），按 confirmedAt 取末条 */
+export async function removeLatestLedger(playId: string): Promise<void> {
+  const rows = await listLedgersByPlay(playId);
+  const last = rows[rows.length - 1];
+  if (last) await db.screenLedgers.delete(last.id);
+}
+
+/** 删除某剧目的全部账本条（未开排重排 / 清空账本） */
+export async function removeLedgersByPlay(playId: string): Promise<void> {
+  await db.screenLedgers.where('playId').equals(playId).delete();
+}
+
+/** 删除一批场次 id 对应的孤儿账本条（场次已删） */
+export async function removeLedgersByScenes(sceneIds: string[]): Promise<void> {
+  if (sceneIds.length === 0) return;
+  await db.screenLedgers.where('sceneId').anyOf(sceneIds).delete();
+}
+
 /* --------------------------- 整库导入导出 --------------------------- */
 
 export interface DatabaseSnapshot {
@@ -226,16 +286,18 @@ export interface DatabaseSnapshot {
   roles: ShadowRole[];
   operators: Operator[];
   cues: PercussionCue[];
+  screenLedgers: ScreenLedgerEntry[];
 }
 
 /** 导出整库快照（去掉内部 revision 字段） */
 export async function exportSnapshot(): Promise<DatabaseSnapshot> {
-  const [plays, scenes, roles, operators, cues] = await Promise.all([
+  const [plays, scenes, roles, operators, cues, screenLedgers] = await Promise.all([
     db.plays.toArray(),
     db.scenes.toArray(),
     db.roles.toArray(),
     db.operators.toArray(),
     db.cues.toArray(),
+    db.screenLedgers.toArray(),
   ]);
   const strip = <T extends Revisioned>(row: T): Omit<T, 'revision'> => {
     const { revision: _revision, ...rest } = row;
@@ -250,18 +312,23 @@ export async function exportSnapshot(): Promise<DatabaseSnapshot> {
     roles: roles.map(strip),
     operators: operators.map(strip),
     cues: cues.map(strip),
+    screenLedgers: screenLedgers.map(strip),
   };
 }
 
 /** 用快照覆盖整库（导入存档） */
 export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.operators, db.cues, async () => {
+  await db.transaction(
+    'rw',
+    [db.plays, db.scenes, db.roles, db.operators, db.cues, db.screenLedgers],
+    async () => {
     await Promise.all([
       db.plays.clear(),
       db.scenes.clear(),
       db.roles.clear(),
       db.operators.clear(),
       db.cues.clear(),
+      db.screenLedgers.clear(),
     ]);
     const rev = <T>(row: T): T & Revisioned => ({ ...row, revision: ROW_REVISION });
     await db.plays.bulkPut(snapshot.plays.map(rev));
@@ -269,31 +336,40 @@ export async function importSnapshot(snapshot: DatabaseSnapshot): Promise<void> 
     await db.roles.bulkPut(snapshot.roles.map(rev));
     await db.operators.bulkPut(snapshot.operators.map(rev));
     await db.cues.bulkPut(snapshot.cues.map(rev));
-  });
+    // 旧版存档没有周转账，按空集合处理
+    await db.screenLedgers.bulkPut((snapshot.screenLedgers ?? []).map(rev));
+    },
+  );
 }
 
 /** 清空全部数据并重新灌入示例数据 */
 export async function resetDatabase(): Promise<void> {
-  await db.transaction('rw', db.plays, db.scenes, db.roles, db.operators, db.cues, async () => {
-    await Promise.all([
-      db.plays.clear(),
-      db.scenes.clear(),
-      db.roles.clear(),
-      db.operators.clear(),
-      db.cues.clear(),
-    ]);
-  });
+  await db.transaction(
+    'rw',
+    [db.plays, db.scenes, db.roles, db.operators, db.cues, db.screenLedgers],
+    async () => {
+      await Promise.all([
+        db.plays.clear(),
+        db.scenes.clear(),
+        db.roles.clear(),
+        db.operators.clear(),
+        db.cues.clear(),
+        db.screenLedgers.clear(),
+      ]);
+    },
+  );
   await seedDatabase();
 }
 
 /** 粗略统计各表行数，用于页脚与概览展示 */
 export async function countAll(): Promise<Record<string, number>> {
-  const [plays, scenes, roles, operators, cues] = await Promise.all([
+  const [plays, scenes, roles, operators, cues, screenLedgers] = await Promise.all([
     db.plays.count(),
     db.scenes.count(),
     db.roles.count(),
     db.operators.count(),
     db.cues.count(),
+    db.screenLedgers.count(),
   ]);
-  return { plays, scenes, roles, operators, cues };
+  return { plays, scenes, roles, operators, cues, screenLedgers };
 }

@@ -13,6 +13,10 @@ export const STORAGE_KEYS = {
   lastBackupAt: 'lastBackupAt',
   /** 场次页表头偏好（是否只看本次排练勾选） */
   sceneOnlySelected: 'sceneOnlySelected',
+  /** 影窗周转账：散场后换景留白分钟数 */
+  turnoverChangeoverMin: 'turnoverChangeoverMin',
+  /** 影窗周转账：开排基准时刻（分钟，用于翻译成台口时钟） */
+  turnoverBaseClockMin: 'turnoverBaseClockMin',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

@@ -83,3 +83,24 @@ export function secondsToPercent(second: number, totalSeconds: number): number {
   const ratio = (Math.max(0, second) / totalSeconds) * 100;
   return Math.min(100, Math.max(0, ratio));
 }
+
+/** 分钟数 → 「X 分钟」/「X 小时 Y 分钟」（用于周转账顺延文案） */
+export function minutesOffsetLabel(minutes: number): string {
+  return minutesToReadable(minutes);
+}
+
+/**
+ * 把相对分钟叠到基准时钟（分钟，0-1439）上翻成 HH:mm，超过 24 小时自动进位并标注 +Nd。
+ * 例：base 19:30，offset 200 → 22:50；offset 300 → 00:30（+1）
+ */
+export function relativeMinuteToClock(baseClockMin: number, offsetMin: number): string {
+  const base = Number.isFinite(baseClockMin) ? ((Math.round(baseClockMin) % 1440) + 1440) % 1440 : 0;
+  const offset = Number.isFinite(offsetMin) ? Math.max(0, Math.round(offsetMin)) : 0;
+  const total = base + offset;
+  const day = Math.floor(total / 1440);
+  const within = total % 1440;
+  const hh = Math.floor(within / 60);
+  const mm = within % 60;
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return day > 0 ? `${pad(hh)}:${pad(mm)}（+${day}）` : `${pad(hh)}:${pad(mm)}`;
+}

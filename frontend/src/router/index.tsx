@@ -9,6 +9,7 @@ import App from '../App';
 
 const PlayList = lazy(() => import('../pages/PlayList'));
 const SceneBoard = lazy(() => import('../pages/SceneBoard'));
+const TurnoverBoard = lazy(() => import('../pages/TurnoverBoard'));
 const RoleAssign = lazy(() => import('../pages/RoleAssign'));
 const CueTimeline = lazy(() => import('../pages/CueTimeline'));
 const OperatorList = lazy(() => import('../pages/OperatorList'));
@@ -26,6 +27,7 @@ function withSuspense(node: ReactNode): ReactNode {
 export const ROUTES = {
   plays: '/plays',
   scenes: (playId: string): string => `/plays/${playId}/scenes`,
+  turnover: (playId: string): string => `/plays/${playId}/turnover`,
   roles: (sceneId: string): string => `/scenes/${sceneId}/roles`,
   cues: (sceneId: string): string => `/scenes/${sceneId}/cues`,
   operators: '/operators',
@@ -39,6 +41,7 @@ export const appRoutes: RouteObject[] = [
       { index: true, element: <Navigate to={ROUTES.plays} replace /> },
       { path: 'plays', element: withSuspense(<PlayList />) },
       { path: 'plays/:id/scenes', element: withSuspense(<SceneBoard />) },
+      { path: 'plays/:id/turnover', element: withSuspense(<TurnoverBoard />) },
       { path: 'scenes/:id/roles', element: withSuspense(<RoleAssign />) },
       { path: 'scenes/:id/cues', element: withSuspense(<CueTimeline />) },
       { path: 'operators', element: withSuspense(<OperatorList />) },
